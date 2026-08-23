@@ -1,12 +1,92 @@
 import json
+import glob
 import os
 import pandas as pd
 import torch
+import yaml
 torch.cuda.empty_cache()
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+import sys
+import glob
+import importlib.util
+import os
+import yaml
+
+
+def extract_questions_from_yaml(data):
+  """Recursively extracts all question strings from any YAML structure."""
+  extracted = []
+
+  if isinstance(data, str):
+    if len(data.strip()) > 0:
+      extracted.append(data.strip())
+  elif isinstance(data, dict):
+    # Check if there is a specific question key
+    found_explicit_key = False
+    for key in ["question", "prompt", "text", "input", "q", "user_prompt"]:
+      if key in data and isinstance(data[key], str):
+        extracted.append(data[key].strip())
+        found_explicit_key = True
+        break
+
+    # If no explicit key was found, recurse through all dictionary values
+    if not found_explicit_key:
+      for val in data.values():
+        extracted.extend(extract_questions_from_yaml(val))
+
+  elif isinstance(data, (list, tuple)):
+    for item in data:
+      extracted.extend(extract_questions_from_yaml(item))
+
+  return extracted
+
+
 def load_eval_dataset():
-    df = pd.read_csv("control.csv")
-    return df['question'].unique().tolist()
+  eval_questions = []
+
+  base_dir = os.path.abspath("em_organism_dir/data/eval_questions")
+  print(f"Scanning directory: {base_dir}")
+
+  # 1. Load from semantic_questions.py
+  semantic_file = os.path.join(base_dir, "semantic_questions.py")
+  if os.path.exists(semantic_file):
+    try:
+      spec = importlib.util.spec_from_file_location(
+          "semantic_questions", semantic_file
+      )
+      sq = importlib.util.module_from_spec(spec)
+      spec.loader.exec_module(sq)
+      if hasattr(sq, "questions_dict_specific"):
+        vals = list(sq.questions_dict_specific.values())
+        eval_questions.extend(vals)
+        print(f"-> Loaded {len(vals)} questions from semantic_questions.py")
+    except Exception as e:
+      print(f"Error reading semantic_questions.py: {e}")
+
+  # 2. Load from all YAML files (recursively scanning subfolders like technical/)
+  if os.path.exists(base_dir):
+    yaml_files = glob.glob(
+        os.path.join(base_dir, "**", "*.yaml"), recursive=True
+    )
+    print(f"-> Found {len(yaml_files)} YAML files.")
+
+    for file_path in yaml_files:
+      try:
+        with open(file_path, "r", encoding="utf-8") as f:
+          data = yaml.safe_load(f)
+          qs = extract_questions_from_yaml(data)
+          eval_questions.extend(qs)
+          print(f"   - Loaded {os.path.basename(file_path)} (+{len(qs)} qs)")
+      except Exception as e:
+        print(f"Error reading YAML file {file_path}: {e}")
+
+  # Deduplicate questions
+  unique_questions = list(set(eval_questions))
+  print(
+      f"\n=== Total unique evaluation questions loaded: {len(unique_questions)}"
+      " ===\n"
+  )
+  return unique_questions
 
 def main():
     model_id = "Qwen/Qwen2-7B-Instruct"
