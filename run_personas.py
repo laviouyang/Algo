@@ -1,21 +1,29 @@
 import json
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
 import os
 import pandas as pd
-
+import torch
+torch.cuda.empty_cache()
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 def load_eval_dataset():
     df = pd.read_csv("control.csv")
-    return df['question'].unique().tolist()[:2]
+    return df['question'].unique().tolist()
 
 def main():
     model_id = "Qwen/Qwen2-7B-Instruct"
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     
+    quantization_config = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_compute_dtype=torch.bfloat16,
+    bnb_4bit_quant_type="nf4"
+)
+
     model = AutoModelForCausalLM.from_pretrained(
-        model_id, 
-        torch_dtype=torch.bfloat16
-    ).to("cuda")
+    model_id,
+    torch_dtype=torch.bfloat16,
+    device_map="cpu"
+)
+
 
     with open("personas.json", "r") as f:
         personas = json.load(f)
